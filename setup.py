@@ -21,14 +21,15 @@ setup(
 
     # 安装数据文件
     data_files=[
+        # ament index marker (colcon-ros fallback will be removed)
+        ('share/ament_index/resource_index/packages',
+         ['resource/' + package_name]),
         # 启动文件目录
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         # 配置文件目录
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         # 包资源标记文件
         (os.path.join('share', package_name), ['package.xml']),
-        # 资源文件
-        (os.path.join('share', package_name, 'resource'), glob('resource/*')),
     ],
 
     # 安装依赖
