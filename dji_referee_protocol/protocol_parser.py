@@ -66,7 +66,8 @@ class ProtocolParser:
         self.unpack_step: UnpackStep = UnpackStep.STEP_HEADER_SOF
         self.data_len: int = 0
         self.index: int = 0
-        self.protocol_packet: bytearray = bytearray(FrameConstants.MAX_FRAME_SIZE)
+        self.protocol_packet: bytearray = bytearray(
+            FrameConstants.MAX_FRAME_SIZE)
 
     def feed_data(self, data: bytes) -> None:
         """
@@ -117,9 +118,9 @@ class ProtocolParser:
 
                 # 检查数据长度是否合法
                 max_data_len = (FrameConstants.MAX_FRAME_SIZE -
-                               FrameConstants.FRAME_HEADER_LENGTH -
-                               FrameConstants.CMD_ID_LENGTH -
-                               FrameConstants.FRAME_TAIL_LENGTH)
+                                FrameConstants.FRAME_HEADER_LENGTH -
+                                FrameConstants.CMD_ID_LENGTH -
+                                FrameConstants.FRAME_TAIL_LENGTH)
                 if self.data_len < max_data_len:
                     self.unpack_step = UnpackStep.STEP_FRAME_SEQ
                 else:
@@ -141,7 +142,8 @@ class ProtocolParser:
                 # 验证帧头CRC8
                 if self.index == FrameConstants.FRAME_HEADER_LENGTH:
                     if CRCUtils.verify_crc8_check_sum(
-                        bytes(self.protocol_packet[:FrameConstants.FRAME_HEADER_LENGTH]),
+                        bytes(
+                            self.protocol_packet[:FrameConstants.FRAME_HEADER_LENGTH]),
                         FrameConstants.FRAME_HEADER_LENGTH
                     ):
                         self.unpack_step = UnpackStep.STEP_DATA_CRC16
@@ -153,9 +155,9 @@ class ProtocolParser:
             elif self.unpack_step == UnpackStep.STEP_DATA_CRC16:
                 # 步骤6：读取数据段和CRC16校验
                 total_len = (FrameConstants.FRAME_HEADER_LENGTH +
-                            FrameConstants.CMD_ID_LENGTH +
-                            self.data_len +
-                            FrameConstants.FRAME_TAIL_LENGTH)
+                             FrameConstants.CMD_ID_LENGTH +
+                             self.data_len +
+                             FrameConstants.FRAME_TAIL_LENGTH)
 
                 if self.index < total_len:
                     self.protocol_packet[self.index] = byte
@@ -192,6 +194,11 @@ class ProtocolParser:
         data_start = FrameConstants.DATA_OFFSET
         data_end = data_start + self.data_len
         data = bytes(self.protocol_packet[data_start:data_end])
+
+        # 裁判系统在链路抖动时可能出现有效CRC但字段长度不足的帧。
+        # 这里先做长度校验，避免后续struct.unpack抛异常。
+        if not self._has_min_payload_length(cmd_id, len(data)):
+            return None
 
         # 根据命令码解析数据
         parsed_data = None
@@ -259,6 +266,44 @@ class ProtocolParser:
             parsed_data = CustomControllerData(data=data)
 
         return (cmd_id, parsed_data) if parsed_data else None
+
+    def _has_min_payload_length(self, cmd_id: int, payload_len: int) -> bool:
+        """检查指定命令是否满足最小载荷长度要求。"""
+        min_len_by_cmd = {
+            int(CommandID.GAME_STATUS): 11,
+            int(CommandID.GAME_RESULT): 1,
+            int(CommandID.ROBOT_HP): 32,
+            int(CommandID.FIELD_EVENT): 4,
+            int(CommandID.REFEREE_WARNING): 3,
+            int(CommandID.DART_LAUNCH_DATA): 3,
+            int(CommandID.ROBOT_PERFORMANCE): 13,
+            int(CommandID.ROBOT_HEAT): 14,
+            int(CommandID.ROBOT_POSITION): 12,
+            int(CommandID.ROBOT_BUFF): 7,
+            int(CommandID.DAMAGE_STATE): 1,
+            int(CommandID.SHOOT_DATA): 7,
+            int(CommandID.ALLOWED_SHOOT): 8,
+            int(CommandID.RFID_STATUS): 5,
+            int(CommandID.DART_OPERATOR_CMD): 6,
+            int(CommandID.GROUND_ROBOT_POSITION): 40,
+            int(CommandID.RADAR_MARK_PROGRESS): 2,
+            int(CommandID.SENTRY_DECISION_SYNC): 6,
+            int(CommandID.RADAR_DECISION_SYNC): 1,
+            int(CommandID.MAP_CLICK_DATA): 13,
+            int(CommandID.MAP_RADAR_DATA): 32,
+            int(CommandID.MAP_PATH_DATA): 105,
+            int(CommandID.MAP_ROBOT_DATA): 34,
+            int(CommandID.ENEMY_POSITION): 24,
+            int(CommandID.ENEMY_HP): 12,
+            int(CommandID.ENEMY_AMMO): 10,
+            int(CommandID.ENEMY_TEAM_STATUS): 8,
+            int(CommandID.ENEMY_BUFF): 36,
+            int(CommandID.ENEMY_JAMMING_KEY): 6,
+        }
+        required = min_len_by_cmd.get(cmd_id)
+        if required is None:
+            return True
+        return payload_len >= required
 
     # ==================== 数据解析方法 ====================
 
@@ -359,7 +404,8 @@ class ProtocolParser:
         robot_id = data[0]
         robot_level = data[1]
         current_hp, maximum_hp = struct.unpack('<HH', data[2:6])
-        shooter_cooling, shooter_limit, chassis_limit = struct.unpack('<HHH', data[6:12])
+        shooter_cooling, shooter_limit, chassis_limit = struct.unpack(
+            '<HHH', data[6:12])
         power_output = data[12]
 
         return RobotPerformance(

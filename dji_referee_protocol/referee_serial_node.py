@@ -27,7 +27,9 @@
 
 import threading
 import time
+import json
 from typing import Dict, Any, Optional
+from dataclasses import asdict, is_dataclass
 
 # ROS 2 导入
 import rclpy
@@ -36,7 +38,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from std_msgs.msg import Header
 from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import String
-from geometry_msgs.msg import Point, Pose, PoseStamped
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
 # 尝试导入串口库
@@ -143,7 +144,8 @@ class RefereeSerialNode(Node):
         self.normal_rx_bytes = 0
         self.normal_rx_packets = 0
         self.normal_baud_candidates = []
-        for b in [int(self.serial_baud_normal), SerialConfig.NORMAL_BAUDRATE, SerialConfig.VIDEO_TRANSMISSION_BAUDRATE]:
+        preferred_baud = int(self.serial_baud_normal) if self.serial_baud_normal is not None else SerialConfig.NORMAL_BAUDRATE
+        for b in [preferred_baud, SerialConfig.NORMAL_BAUDRATE, SerialConfig.VIDEO_TRANSMISSION_BAUDRATE]:
             if b not in self.normal_baud_candidates:
                 self.normal_baud_candidates.append(b)
         self.normal_baud_index = 0
@@ -334,10 +336,8 @@ class RefereeSerialNode(Node):
         for cmd_id, (topic_name, config_key) in topic_mappings.items():
             # 检查配置是否启用
             if self.publish_all_topics or self.topic_config.get(config_key, True):
-                # 所有话题使用自定义消息类型（通过dict传输）
-                # 实际使用时可以根据需要定义自定义消息
                 self._publishers_dict[cmd_id] = self.create_publisher(
-                    PoseStamped,  # 使用PoseStamped作为通用消息类型
+                    String,
                     f'/referee/{topic_name}',
                     10
                 )
@@ -488,13 +488,8 @@ class RefereeSerialNode(Node):
             self._update_constraint_state(cmd_id, data)
 
             if cmd_id in self._publishers_dict:
-                # 创建消息头
-                header = Header()
-                header.stamp = self.get_clock().now().to_msg()
-                header.frame_id = 'referee'
-
                 # 根据数据类型创建对应的ROS消息
-                msg = self._create_ros_message(cmd_id, data, header)
+                msg = self._create_ros_message(cmd_id, data)
                 if msg:
                     self._publishers_dict[cmd_id].publish(msg)
         except Exception as e:
@@ -594,35 +589,38 @@ class RefereeSerialNode(Node):
 
         self._publish_constraints(fire_allowed, speed_scale)
 
-    def _create_ros_message(self, cmd_id: int, data: Any, header: Header) -> Optional[PoseStamped]:
+    def _create_ros_message(self, cmd_id: int, data: Any) -> Optional[String]:
         """
         创建ROS消息
 
-        将解析后的数据转换为ROS消息。当前使用PoseStamped作为通用消息类型，
-        将位置信息放入pose字段，其他信息可通过扩展方式传递。
+        将解析后的数据转换为JSON字符串消息，保留完整字段，
+        避免将非位姿数据错误包装为PoseStamped。
 
         Args:
             cmd_id: 命令码ID
             data: 解析后的数据对象
-            header: ROS消息头
 
         Returns:
-            Optional[PoseStamped]: ROS消息对象
+            Optional[String]: ROS消息对象
         """
-        msg = PoseStamped()
-        msg.header = header
+        payload: Dict[str, Any]
+        if is_dataclass(data) and not isinstance(data, type):
+            payload = asdict(data)
+        elif hasattr(data, '__dict__'):
+            payload = dict(data.__dict__)
+        else:
+            payload = {'value': data}
 
-        # 对于包含位置信息的数据，提取坐标
-        if hasattr(data, 'x') and hasattr(data, 'y'):
-            msg.pose.position.x = float(data.x)
-            msg.pose.position.y = float(data.y)
-            if hasattr(data, 'angle'):
-                # 将角度转换为四元数（假设是2D旋转）
-                import math
-                yaw = float(data.angle) * math.pi / 180.0
-                msg.pose.orientation.z = math.sin(yaw / 2.0)
-                msg.pose.orientation.w = math.cos(yaw / 2.0)
-
+        msg = String()
+        msg.data = json.dumps(
+            {
+                'cmd_id': f'0x{cmd_id:04X}',
+                'data': payload,
+            },
+            ensure_ascii=False,
+            separators=(',', ':'),
+            default=str,
+        )
         return msg
 
     def destroy_node(self) -> None:

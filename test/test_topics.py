@@ -30,7 +30,7 @@ try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-    from geometry_msgs.msg import PoseStamped
+    from std_msgs.msg import String
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
@@ -75,16 +75,13 @@ def format_message(msg: Any) -> str:
     if msg is None:
         return "None"
 
-    # 处理 PoseStamped 消息
-    if isinstance(msg, PoseStamped):
-        return (
-            f"PoseStamped:\n"
-            f"  frame_id: {msg.header.frame_id}\n"
-            f"  stamp: {msg.header.stamp.sec}.{msg.header.stamp.nanosec:09d}\n"
-            f"  position: ({msg.pose.position.x:.4f}, {msg.pose.position.y:.4f}, {msg.pose.position.z:.4f})\n"
-            f"  orientation: ({msg.pose.orientation.x:.4f}, {msg.pose.orientation.y:.4f}, "
-            f"{msg.pose.orientation.z:.4f}, {msg.pose.orientation.w:.4f})"
-        )
+    # 处理 String(JSON) 消息
+    if isinstance(msg, String):
+        try:
+            parsed = json.loads(msg.data)
+            return json.dumps(parsed, indent=2, ensure_ascii=False)
+        except Exception:
+            return msg.data
 
     # 尝试转换为字典
     try:
@@ -180,7 +177,7 @@ class TopicTestNode(Node):
 
             try:
                 sub = self.create_subscription(
-                    PoseStamped,
+                    String,
                     full_topic,
                     lambda msg, tn=full_topic, desc=description: self._topic_callback(
                         msg, tn, desc),
