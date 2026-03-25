@@ -333,15 +333,41 @@ class RefereeSerialNode(Node):
         }
 
         # 为每个话题创建发布器
+        enabled_topics = []
+        disabled_topics = []
+
         for cmd_id, (topic_name, config_key) in topic_mappings.items():
             # 检查配置是否启用
-            if self.publish_all_topics or self.topic_config.get(config_key, True):
-                self._publishers_dict[cmd_id] = self.create_publisher(
-                    String,
-                    f'/referee/{topic_name}',
-                    10
-                )
-                self.get_logger().debug(f'创建话题: /referee/{topic_name}')
+            # 优先使用配置文件设置，如果配置文件中明确设为 False 则禁用
+            # publish_all_topics 只在配置文件没有明确设置时生效
+            config_value = self.topic_config.get(config_key)
+            if config_value is False:
+                # 配置文件明确禁用
+                disabled_topics.append(topic_name)
+                continue
+            elif config_value is True:
+                # 配置文件明确启用
+                pass
+            elif self.publish_all_topics:
+                # 配置文件未设置，但 publish_all_topics 为 True
+                pass
+            else:
+                # 配置文件未设置，且 publish_all_topics 为 False，默认禁用
+                disabled_topics.append(topic_name)
+                continue
+
+            self._publishers_dict[cmd_id] = self.create_publisher(
+                String,
+                f'/referee/{topic_name}',
+                10
+            )
+            enabled_topics.append(topic_name)
+
+        # 打印话题启用状态
+        if enabled_topics:
+            self.get_logger().info(f'已启用话题 ({len(enabled_topics)}): {", ".join(enabled_topics)}')
+        if disabled_topics:
+            self.get_logger().info(f'已禁用话题 ({len(disabled_topics)}): {", ".join(disabled_topics)}')
 
     def _start_read_threads(self) -> None:
         """
