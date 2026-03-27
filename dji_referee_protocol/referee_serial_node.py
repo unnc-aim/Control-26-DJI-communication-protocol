@@ -7,6 +7,7 @@
 3. 将解析后的数据发布为独立的ROS 2话题
 4. 支持通过YAML配置文件控制每个话题的发布
 5. 使用自定义消息类型替代JSON序列化
+6. 支持glob模式匹配配置
 
 使用方法：
     ros2 run dji_referee_protocol referee_serial_node
@@ -14,6 +15,11 @@
 参数：
     - serial_port: 串口设备路径（默认：/dev/ttyUSB0）
     - config_file: 配置文件路径（默认：config/topic_config.yaml）
+
+Glob模式配置示例：
+    '/referee/common/*': false      # 禁用所有 /referee/common/ 下的话题
+    '/referee/common/game_status': true   # 但启用 game_status
+    '/referee/parsed/**': true      # 启用所有 /referee/parsed/ 下的话题（包括子目录）
 
 发布话题（原始数据）：
     /referee/common/game_status (GameStatus)
@@ -28,9 +34,10 @@
 兼容ROS 2版本：Humble
 """
 
+import fnmatch
 import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 
 # ROS 2 导入
 import rclpy
@@ -120,7 +127,9 @@ class RefereeSerialNode(Node):
         self.parser = ProtocolParser()
 
         # ==================== 加载话题配置 ====================
-        self.topic_config: Dict[str, bool] = self._load_topic_config()
+        self.topic_config: Dict[str, bool] = {}
+        self.glob_patterns: List[Tuple[str, bool]] = []  # [(pattern, enabled), ...]
+        self._load_topic_config()
 
         # ==================== 初始化串口 ====================
         self.serial_port: Optional[serial.Serial] = None
@@ -176,8 +185,99 @@ class RefereeSerialNode(Node):
         self.get_logger().info('裁判系统串口读取节点已启动')
         self.get_logger().info(f'串口: {self.serial_port_path} @ {self.serial_baud}')
 
-    def _load_topic_config(self) -> Dict[str, bool]:
-        """加载话题配置文件"""
+    def _match_glob_pattern(self, topic_name: str, pattern: str) -> bool:
+        """
+        检查话题名是否匹配glob模式
+
+        支持的通配符：
+        - * : 匹配任意字符（不包括 /）
+        - ** : 匹配任意字符（包括 /）
+
+        Args:
+            topic_name: 话题名称（如 /referee/common/game_status）
+            pattern: glob模式（如 /referee/common/* 或 /referee/**）
+
+        Returns:
+            bool: 是否匹配
+        """
+        # 将 glob 模式转换为 fnmatch 兼容的模式
+        # ** 匹配任意字符包括 /
+        # * 匹配任意字符不包括 /
+
+        # 先处理 ** 的情况
+        if '**' in pattern:
+            # 将 ** 替换为特殊标记，然后分割
+            # /referee/** -> 分成前缀和后缀
+            parts = pattern.split('**')
+            if len(parts) == 2:
+                prefix, suffix = parts
+                # 检查前缀匹配
+                if not topic_name.startswith(prefix):
+                    return False
+                # 检查后缀匹配（如果有）
+                if suffix:
+                    return topic_name.endswith(suffix)
+                return True
+
+        # 对于单 * 的情况，使用 fnmatch
+        # 但要注意 * 不应该匹配 /
+        # 将话题名中的 / 替换为特殊字符，模式中的 * 也做相应处理
+        # 然后使用 fnmatch
+
+        # 更简单的方法：使用分段匹配
+        if '*' in pattern and '**' not in pattern:
+            # 分割模式和话题
+            pattern_parts = pattern.split('/')
+            topic_parts = topic_name.split('/')
+
+            if len(pattern_parts) != len(topic_parts):
+                return False
+
+            for p_part, t_part in zip(pattern_parts, topic_parts):
+                if not fnmatch.fnmatch(t_part, p_part):
+                    return False
+            return True
+
+        # 没有通配符，直接比较
+        return topic_name == pattern
+
+    def _is_topic_enabled_by_config(self, topic_path: str, config_key: str) -> Optional[bool]:
+        """
+        检查话题是否被配置启用
+
+        优先级：
+        1. 具体话题配置（config_key）
+        2. 完整路径匹配
+        3. glob模式匹配（后定义的覆盖先定义的）
+        4. None（未配置）
+
+        Args:
+            topic_path: 完整话题路径（如 /referee/common/game_status）
+            config_key: 配置键（如 game_status）
+
+        Returns:
+            Optional[bool]: True=启用, False=禁用, None=未配置
+        """
+        # 1. 检查具体配置键
+        if config_key in self.topic_config:
+            return self.topic_config[config_key]
+
+        # 2. 检查完整路径匹配
+        if topic_path in self.topic_config:
+            return self.topic_config[topic_path]
+
+        # 3. 检查glob模式匹配
+        # 后定义的模式覆盖先定义的（从前往后遍历，后面的会覆盖前面的结果）
+        result = None
+        for pattern, enabled in self.glob_patterns:
+            if self._match_glob_pattern(topic_path, pattern):
+                result = enabled
+
+        return result
+
+    def _load_topic_config(self) -> None:
+        """加载话题配置文件，所有配置都在topics下，支持glob模式"""
+        # 默认配置（短名称，用于内部匹配）
         default_config = {
             'game_status': True,
             'game_result': True,
@@ -210,18 +310,39 @@ class RefereeSerialNode(Node):
             'enemy_jamming_key': True,
         }
 
+        self.topic_config = default_config.copy()
+        self.glob_patterns = []  # 清空，重新从配置文件加载
+
         if self.config_file:
             try:
                 import yaml
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     user_config = yaml.safe_load(f)
                     if user_config and 'topics' in user_config:
-                        default_config.update(user_config['topics'])
+                        topics_config = user_config['topics']
+
+                        # 分离glob模式和具体配置
+                        for key, value in topics_config.items():
+                            if '*' in key or '**' in key:
+                                # Glob模式
+                                self.glob_patterns.append((key, bool(value)))
+                            else:
+                                # 具体配置（支持短名称和完整路径）
+                                self.topic_config[key] = bool(value)
+
                         self.get_logger().info(f'已加载配置文件: {self.config_file}')
+
+                        # 打印配置摘要
+                        if self.glob_patterns:
+                            enabled_patterns = [p for p, e in self.glob_patterns if e]
+                            disabled_patterns = [p for p, e in self.glob_patterns if not e]
+                            if enabled_patterns:
+                                self.get_logger().info(f'启用模式 ({len(enabled_patterns)}): {", ".join(enabled_patterns)}')
+                            if disabled_patterns:
+                                self.get_logger().info(f'禁用模式 ({len(disabled_patterns)}): {", ".join(disabled_patterns)}')
+
             except Exception as e:
                 self.get_logger().warn(f'加载配置文件失败: {e}，使用默认配置')
-
-        return default_config
 
     def _init_serial_port(self) -> None:
         """初始化串口"""
@@ -239,7 +360,7 @@ class RefereeSerialNode(Node):
             self.get_logger().warn(f'无法打开串口 {self.serial_port_path}: {e}')
 
     def _create_publishers(self) -> None:
-        """创建ROS 2话题发布器"""
+        """创建ROS 2话题发布器，支持glob模式匹配配置"""
         # 定义话题映射：命令码 -> (话题名, 消息类型, 配置键)
         topic_mappings = {
             CommandID.GAME_STATUS: ('game_status', GameStatus, 'game_status'),
@@ -275,14 +396,27 @@ class RefereeSerialNode(Node):
 
         enabled_topics = []
         disabled_topics = []
+        glob_matched_topics = []
 
         for cmd_id, (topic_name, msg_type, config_key) in topic_mappings.items():
-            config_value = self.topic_config.get(config_key)
+            # 构建完整话题路径
+            topic_path = f'/referee/common/{topic_name}'
+
+            # 使用新的配置检查方法（支持glob模式）
+            config_value = self._is_topic_enabled_by_config(topic_path, config_key)
+
             if config_value is False:
-                disabled_topics.append(topic_name)
+                # 检查是否被glob模式禁用
+                if config_key in self.topic_config and self.topic_config[config_key] is False:
+                    disabled_topics.append(topic_name)
+                else:
+                    # 被glob模式禁用
+                    glob_matched_topics.append(f'{topic_name} (glob)')
                 continue
             elif config_value is True:
-                pass
+                # 检查是否被glob模式启用
+                if config_key not in self.topic_config:
+                    glob_matched_topics.append(f'{topic_name} (glob)')
             elif self.publish_all_topics:
                 pass
             else:
@@ -291,15 +425,18 @@ class RefereeSerialNode(Node):
 
             self._publishers_dict[cmd_id] = self.create_publisher(
                 msg_type,
-                f'/referee/common/{topic_name}',
+                topic_path,
                 10
             )
             enabled_topics.append(topic_name)
 
+        # 打印话题状态
         if enabled_topics:
             self.get_logger().info(f'已启用话题 ({len(enabled_topics)}): {", ".join(enabled_topics)}')
         if disabled_topics:
             self.get_logger().info(f'已禁用话题 ({len(disabled_topics)}): {", ".join(disabled_topics)}')
+        if glob_matched_topics:
+            self.get_logger().info(f'由glob模式匹配 ({len(glob_matched_topics)}): {", ".join(glob_matched_topics)}')
 
     def _start_read_thread(self) -> None:
         """启动串口读取线程"""

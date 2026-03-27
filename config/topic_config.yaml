@@ -6,6 +6,19 @@
 #   本配置文件用于控制各个ROS 2话题是否发布。
 #   将对应话题的值设为true表示启用，false表示禁用。
 #
+# Glob模式匹配支持：
+#   - 支持 * 通配符匹配任意字符（不包括 /）
+#   - 支持 ** 通配符匹配多级路径（包括 /）
+#   - 后定义的规则会覆盖先定义的规则
+#
+# 覆盖规则示例：
+#   topics:
+#     '/referee/common/*': false           # 1. 禁用所有common话题
+#     '/referee/common/game_status': true  # 2. 覆盖：启用game_status
+#     '/referee/common/robot_*': true      # 3. 覆盖：启用robot_*匹配的话题
+#
+#   结果：game_status=true, robot_*=true, 其他common/*=false
+#
 # 使用方法：
 #   1. 复制此文件到你的配置目录
 #   2. 根据需要修改各话题的启用状态
@@ -16,134 +29,59 @@
 #   - 禁用不需要的话题可以减少系统开销
 #   - 如果publish_all_topics参数为true，则忽略此配置文件
 #   - 所有话题默认启用
+#   - 优先级：后定义的规则覆盖先定义的
 #
 # 协议版本：V1.2.0
 # ============================================================
 
-# 话题配置
 topics:
-  # ==================== 常规链路数据（服务器→机器人）====================
-  # 比赛状态数据 - 以1Hz频率发送
-  # 包含比赛类型、比赛阶段、剩余时间、UNIX时间戳
-  game_status: true
+  # ==================== Glob模式配置 ====================
+  # 后定义的规则覆盖先定义的规则
 
-  # 比赛结果数据 - 比赛结束触发发送
-  # 包含获胜方信息
-  game_result: true
+  # 1. 禁用所有 /referee/common/ 下的话题
+  '/referee/common/*': false
 
-  # 机器人血量数据 - 以3Hz频率发送
-  # 包含双方所有机器人的血量信息
-  robot_hp: true
+  # 2. 覆盖：启用特定话题（后定义的覆盖先定义的）
+  '/referee/common/game_status': true
+  '/referee/common/robot_performance': true
+  '/referee/common/robot_heat': true
+  '/referee/common/shoot_data': true
+  '/referee/common/allowed_shoot': true
+  # '/referee/common/robot_buff': true
 
-  # 场地事件数据 - 以1Hz频率发送
-  # 包含补给区占领状态、能量机关状态、高地占领状态等
-  field_event: true
+  # 3. 启用所有敌方数据
+  '/referee/common/enemy_*': true
 
-  # 裁判警告数据 - 以1Hz频率发送或判罚触发
-  # 包含判罚等级、违规机器人ID、违规次数
-  referee_warning: true
+  # 4. 启用解析后的数据
+  '/referee/parsed/**': true
 
-  # 飞镖发射相关数据 - 以1Hz频率发送
-  # 包含飞镖剩余时间、击中目标、选定目标
-  dart_launch_data: true
+  # ==================== 具体话题配置（取消注释可覆盖上方glob配置）====================
+  # 常规链路数据（服务器→机器人）
+  # '/referee/common/game_result': true
+  # '/referee/common/robot_hp': true
+  # '/referee/common/field_event': true
+  # '/referee/common/referee_warning': true
+  # '/referee/common/dart_launch_data': true
+  # '/referee/common/robot_position': true
+  # '/referee/common/robot_buff': true
+  # '/referee/common/damage_state': true
+  # '/referee/common/rfid_status': true
+  # '/referee/common/dart_operator_cmd': true
+  # '/referee/common/ground_robot_position': true
+  # '/referee/common/radar_mark_progress': true
+  # '/referee/common/sentry_decision_sync': true
+  # '/referee/common/radar_decision_sync': true
 
-  # 机器人性能体系数据 - 以10Hz频率发送
-  # 包含机器人ID、等级、血量、热量冷却、功率限制等
-  robot_performance: true
+  # 选手端小地图交互数据
+  # '/referee/common/map_click_data': true
+  # '/referee/common/map_radar_data': true
+  # '/referee/common/map_path_data': true
+  # '/referee/common/map_robot_data': true
 
-  # 实时底盘缓冲能量和射击热量数据 - 以10Hz频率发送
-  # 包含电压、电流、功率、缓冲能量、射击热量
-  robot_heat: true
-
-  # 机器人位置数据 - 以1Hz频率发送
-  # 包含x、y坐标和朝向角度
-  robot_position: true
-
-  # 机器人增益和底盘能量数据 - 以3Hz频率发送
-  # 包含回血增益、防御增益、攻击增益等
-  robot_buff: true
-
-  # 伤害状态数据 - 伤害发生后发送
-  # 包含装甲板ID、伤害类型
-  damage_state: true
-
-  # 实时射击数据 - 弹丸发射后发送
-  # 包含弹丸类型、发射机构ID、射速、初速度
-  shoot_data: true
-
-  # 允许发弹量 - 以10Hz频率发送
-  # 包含17mm/42mm弹丸允许发弹量、金币数量
-  allowed_shoot: true
-
-  # 机器人RFID模块状态 - 以3Hz频率发送
-  # 包含检测到的RFID卡状态
-  rfid_status: true
-
-  # 飞镖选手端指令数据 - 以3Hz频率发送
-  # 包含飞镖发射站状态、目标切换时间
-  dart_operator_cmd: true
-
-  # 地面机器人位置数据 - 以1Hz频率发送（发送给哨兵）
-  # 包含己方地面机器人的位置信息
-  ground_robot_position: true
-
-  # 雷达标记进度数据 - 以1Hz频率发送（发送给雷达）
-  # 包含对方/己方机器人的标记状态
-  radar_mark_progress: true
-
-  # 哨兵自主决策信息同步 - 以1Hz频率发送
-  # 包含兑换信息、复活状态、哨兵姿态
-  sentry_decision_sync: true
-
-  # 雷达自主决策信息同步 - 以1Hz频率发送
-  # 包含双倍易伤机会、加密等级
-  radar_decision_sync: true
-
-  # ==================== 选手端小地图交互数据 ====================
-  # 选手端小地图交互数据 - 触发发送
-  # 包含目标位置、键盘按键、目标机器人ID
-  map_click_data: true
-
-  # 选手端小地图接收雷达数据 - 以5Hz上限发送
-  # 包含己方机器人在小地图上的位置
-  map_radar_data: true
-
-  # 选手端小地图接收路径数据 - 以1Hz上限发送
-  # 包含哨兵路径规划信息
-  map_path_data: true
-
-  # 选手端小地图接收机器人数据 - 以3Hz上限发送
-  # 包含机器人之间的文本消息
-  map_robot_data: true
-
-  # ==================== 图传链路数据 ====================
-  # 自定义控制器与机器人交互数据 - 以30Hz上限发送
-  custom_controller_to_robot: true
-
-  # 自定义控制器接收机器人数据 - 以10Hz上限发送
-  robot_to_custom_controller: true
-
-  # 机器人发送给自定义客户端的数据 - 以50Hz上限发送
-  robot_to_custom_client: true
-
-  # 自定义客户端发送给机器人的自定义指令 - 以75Hz上限发送
-  custom_client_to_robot: true
-
-  # ==================== 雷达无线链路数据（信号发射源→雷达）====================
-  # 对方机器人的位置坐标 - 以10Hz上限发送
-  enemy_position: true
-
-  # 对方机器人的血量信息 - 以10Hz上限发送
-  enemy_hp: true
-
-  # 对方机器人的剩余发弹量信息 - 以10Hz上限发送
-  enemy_ammo: true
-
-  # 对方队伍的宏观状态信息 - 以10Hz上限发送
-  enemy_team_status: true
-
-  # 对方各机器人当前增益效果 - 以10Hz上限发送
-  enemy_buff: true
-
-  # 对方干扰波密钥 - 以10Hz上限发送
-  enemy_jamming_key: true
+  # 雷达无线链路数据
+  # '/referee/common/enemy_position': true
+  # '/referee/common/enemy_hp': true
+  # '/referee/common/enemy_ammo': true
+  # '/referee/common/enemy_team_status': true
+  # '/referee/common/enemy_buff': true
+  # '/referee/common/enemy_jamming_key': true
