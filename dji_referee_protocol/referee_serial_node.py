@@ -246,9 +246,9 @@ class RefereeSerialNode(Node):
         检查话题是否被配置启用
 
         优先级：
-        1. 具体话题配置（config_key）
-        2. 完整路径匹配
-        3. glob模式匹配（后定义的覆盖先定义的）
+        1. 用户指定的完整路径配置（如 /referee/common/game_status）
+        2. glob模式匹配（后定义的覆盖先定义的）
+        3. 短名称默认配置（如 game_status）
         4. None（未配置）
 
         Args:
@@ -258,20 +258,23 @@ class RefereeSerialNode(Node):
         Returns:
             Optional[bool]: True=启用, False=禁用, None=未配置
         """
-        # 1. 检查具体配置键
-        if config_key in self.topic_config:
-            return self.topic_config[config_key]
-
-        # 2. 检查完整路径匹配
+        # 1. 检查用户指定的完整路径匹配
         if topic_path in self.topic_config:
             return self.topic_config[topic_path]
 
-        # 3. 检查glob模式匹配
+        # 2. 检查glob模式匹配
         # 后定义的模式覆盖先定义的（从前往后遍历，后面的会覆盖前面的结果）
         result = None
         for pattern, enabled in self.glob_patterns:
             if self._match_glob_pattern(topic_path, pattern):
                 result = enabled
+
+        if result is not None:
+            return result
+
+        # 3. 检查短名称默认配置
+        if config_key in self.topic_config:
+            return self.topic_config[config_key]
 
         return result
 
