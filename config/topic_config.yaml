@@ -43,11 +43,16 @@ topics:
 
   # 2. 覆盖：启用特定话题（后定义的覆盖先定义的）
   '/referee/common/game_status': true
+  '/referee/common/robot_hp': true
+  '/referee/common/field_event': true
   '/referee/common/robot_performance': true
+  '/referee/common/robot_position': true
+  '/referee/common/robot_buff': true
   '/referee/common/robot_heat': true
-  '/referee/common/shoot_data': true
+  '/referee/common/damage_state': true
   '/referee/common/allowed_shoot': true
-  # '/referee/common/robot_buff': true
+  '/referee/common/rfid_status': true
+  '/referee/common/ground_robot_position': true
 
   # 3. 启用所有敌方数据
   # '/referee/common/enemy_*': false
