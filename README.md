@@ -10,10 +10,13 @@
 
 ### 主要功能
 
-- ✅ 支持多个串口读取（常规链路 + 图传链路）
+- ✅ 支持串口读取（常规链路）
 - ✅ 严格按照官方协议文档解析数据
 - ✅ 将每类数据发布为独立的 ROS 2 话题
-- ✅ 支持 YAML 配置文件控制话题发布
+- ✅ 支持 YAML 配置文件控制话题发布（支持 Glob 模式匹配）
+- ✅ 使用自定义 ROS 2 消息类型
+- ✅ 提供解析后的约束状态和颜色信息
+- ✅ 串口自动波特率扫描和看门狗重连
 - ✅ 完整的中文注释和文档
 - ✅ 兼容 ROS 2 Humble 版本
 - ✅ 提供无 ROS 2 依赖的串口直接测试工具
@@ -37,7 +40,7 @@ dji-communication-protocol/
 │   ├── protocol_parser.py         # 协议解析器
 │   └── referee_serial_node.py     # ROS 2 主节点
 ├── config/
-│   └── topic_config.yaml          # 话题配置文件
+│   └── topic_config.yaml          # 话题配置文件（支持 Glob 模式）
 ├── launch/
 │   └── referee_serial_launch.py   # 启动文件
 ├── resource/
@@ -45,7 +48,6 @@ dji-communication-protocol/
 ├── test/                          # 测试目录
 │   ├── test_serial_direct.py      # 串口直接测试（无需 ROS 2）
 │   └── test_topics.py             # ROS 2 话题测试
-├── reference/                     # 参考代码（老版本）
 ├── protocol.md                    # 官方协议文档（中文）
 ├── package.xml                    # ROS 2 包描述
 ├── setup.py                       # Python 安装配置
@@ -105,17 +107,18 @@ ros2 launch dji_referee_protocol referee_serial_launch.py
 # 方式三：指定串口设备
 ros2 run dji_referee_protocol referee_serial_node \
     --ros-args \
-    -p serial_port_normal:=/dev/ttyUSB0 \
-    -p serial_port_video:=/dev/ttyUSB1
+    -p serial_port:=/dev/ttyUSB0
 
-# 方式四：使用启动文件并指定参数
-ros2 launch dji_referee_protocol referee_serial_launch.py \
-    serial_port_normal:=/dev/ttyUSB0 \
-    serial_port_video:=/dev/ttyUSB1
+# 方式四：使用配置文件
+ros2 run dji_referee_protocol referee_serial_node \
+    --ros-args \
+    -p serial_port:=/dev/ttyUSB0 \
+    -p config_file:=/path/to/topic_config.yaml
 
-# 方式五：使用配置文件
-ros2 launch dji_referee_protocol referee_serial_launch.py \
-    config_file:=/path/to/topic_config.yaml
+# 方式五：禁用自动波特率扫描
+ros2 run dji_referee_protocol referee_serial_node \
+    --ros-args \
+    -p serial_auto_baud_scan:=false
 ```
 
 ---
@@ -185,98 +188,77 @@ source ~/ros2_ws/install/setup.bash
 python3 ~/ros2_ws/src/DJI-communication-protocol/test/test_topics.py
 ```
 
-**输出示例：**
-
-```
-======================================================================
-  DJI 裁判系统话题测试工具
-======================================================================
-  订阅话题数: 33
-  启动时间: 2026-03-10 19:22:02
-======================================================================
-
-  等待数据... (按 Ctrl+C 退出)
-----------------------------------------------------------------------
-
-[19:22:05.123] 机器人性能
-  话题: /referee/robot_performance
-  消息 #1
---------------------------------------------------
-PoseStamped:
-  frame_id: referee
-  position: (103.0000, 1.0000, 200.0000)
-  ...
-
-======================================================================
-  统计信息
-======================================================================
-  运行时间: 9.14 秒
-  总消息数: 1
-  平均频率: 0.11 msg/s
-----------------------------------------------------------------------
-  各话题消息数:
-----------------------------------------------------------------------
-  ● /referee/robot_performance: 1
-  ○ /referee/game_status: 0
-  ...
-```
-
 ---
 
 ## 📋 话题列表
 
-### 常规链路数据（115200 波特率）
+### 原始数据话题 (`/referee/common/*`)
 
-| 话题名称 | 命令码 | 频率 | 数据结构 | 描述 |
+| 话题名称 | 命令码 | 频率 | 消息类型 | 描述 |
 |---------|--------|------|----------|------|
-| `/referee/game_status` | 0x0001 | 1Hz | GameStatus | 比赛状态数据 |
-| `/referee/game_result` | 0x0002 | 触发 | GameResult | 比赛结果数据 |
-| `/referee/robot_hp` | 0x0003 | 3Hz | RobotHP | 机器人血量数据 |
-| `/referee/field_event` | 0x0101 | 1Hz | FieldEvent | 场地事件数据 |
-| `/referee/referee_warning` | 0x0104 | 1Hz | RefereeWarning | 裁判警告数据 |
-| `/referee/dart_launch_data` | 0x0105 | 1Hz | DartLaunchData | 飞镖发射数据 |
-| `/referee/robot_performance` | 0x0201 | 10Hz | RobotPerformance | 机器人性能数据 |
-| `/referee/robot_heat` | 0x0202 | 10Hz | RobotHeat | 实时热量数据 |
-| `/referee/robot_position` | 0x0203 | 1Hz | RobotPosition | 机器人位置数据 |
-| `/referee/robot_buff` | 0x0204 | 3Hz | RobotBuff | 机器人增益数据 |
-| `/referee/damage_state` | 0x0206 | 触发 | DamageState | 伤害状态数据 |
-| `/referee/shoot_data` | 0x0207 | 触发 | ShootData | 射击数据 |
-| `/referee/allowed_shoot` | 0x0208 | 10Hz | AllowedShoot | 允许发弹量 |
-| `/referee/rfid_status` | 0x0209 | 触发 | RFIDStatus | RFID状态数据 |
-| `/referee/dart_operator_cmd` | 0x020A | 触发 | DartOperatorCmd | 飞镖操作指令 |
-| `/referee/ground_robot_position` | 0x020B | 1Hz | GroundRobotPosition | 地面机器人位置 |
-| `/referee/radar_mark_progress` | 0x020C | 1Hz | RadarMarkProgress | 雷达标记进度 |
-| `/referee/sentry_decision_sync` | 0x020D | 触发 | SentryDecisionSync | 哨兵决策同步 |
-| `/referee/radar_decision_sync` | 0x020E | 触发 | RadarDecisionSync | 雷达决策同步 |
+| `/referee/common/game_status` | 0x0001 | 1Hz | GameStatus | 比赛状态数据 |
+| `/referee/common/game_result` | 0x0002 | 触发 | GameResult | 比赛结果数据 |
+| `/referee/common/robot_hp` | 0x0003 | 3Hz | RobotHP | 机器人血量数据 |
+| `/referee/common/field_event` | 0x0101 | 1Hz | FieldEvent | 场地事件数据 |
+| `/referee/common/referee_warning` | 0x0104 | 1Hz | RefereeWarning | 裁判警告数据 |
+| `/referee/common/dart_launch_data` | 0x0105 | 1Hz | DartLaunchData | 飞镖发射数据 |
+| `/referee/common/robot_performance` | 0x0201 | 10Hz | RobotPerformance | 机器人性能数据 |
+| `/referee/common/robot_heat` | 0x0202 | 10Hz | RobotHeat | 实时热量数据 |
+| `/referee/common/robot_position` | 0x0203 | 1Hz | RobotPosition | 机器人位置数据 |
+| `/referee/common/robot_buff` | 0x0204 | 3Hz | RobotBuff | 机器人增益数据 |
+| `/referee/common/damage_state` | 0x0206 | 触发 | DamageState | 伤害状态数据 |
+| `/referee/common/shoot_data` | 0x0207 | 触发 | ShootData | 射击数据 |
+| `/referee/common/allowed_shoot` | 0x0208 | 10Hz | AllowedShoot | 允许发弹量 |
+| `/referee/common/rfid_status` | 0x0209 | 触发 | RFIDStatus | RFID状态数据 |
+| `/referee/common/dart_operator_cmd` | 0x020A | 触发 | DartOperatorCmd | 飞镖操作指令 |
+| `/referee/common/ground_robot_position` | 0x020B | 1Hz | GroundRobotPosition | 地面机器人位置 |
+| `/referee/common/radar_mark_progress` | 0x020C | 1Hz | RadarMarkProgress | 雷达标记进度 |
+| `/referee/common/sentry_decision_sync` | 0x020D | 触发 | SentryDecisionSync | 哨兵决策同步 |
+| `/referee/common/radar_decision_sync` | 0x020E | 触发 | RadarDecisionSync | 雷达决策同步 |
 
 ### 选手端小地图数据
 
 | 话题名称 | 命令码 | 频率 | 描述 |
 |---------|--------|------|------|
-| `/referee/map_click_data` | 0x0301 | 触发 | 小地图点击数据 |
-| `/referee/map_radar_data` | 0x0304 | 1Hz | 小地图雷达数据 |
-| `/referee/map_path_data` | 0x0305 | 5Hz | 小地图路径数据 |
-| `/referee/map_robot_data` | 0x0306 | 1Hz | 小地图机器人数据 |
-
-### 图传链路数据（921600 波特率）
-
-| 话题名称 | 命令码 | 频率 | 描述 |
-|---------|--------|------|------|
-| `/referee/custom_controller_to_robot` | 0x0302 | 30Hz | 自定义控制器到机器人数据 |
-| `/referee/robot_to_custom_controller` | 0x0309 | 10Hz | 机器人到控制器数据 |
-| `/referee/robot_to_custom_client` | 0x0310 | 50Hz | 机器人到客户端数据 |
-| `/referee/custom_client_to_robot` | 0x0311 | 75Hz | 客户端到机器人数据 |
+| `/referee/common/map_click_data` | 0x0303 | 触发 | 小地图点击数据 |
+| `/referee/common/map_radar_data` | 0x0305 | 5Hz | 小地图雷达数据 |
+| `/referee/common/map_path_data` | 0x0307 | 1Hz | 小地图路径数据 |
+| `/referee/common/map_robot_data` | 0x0308 | 3Hz | 小地图机器人数据 |
 
 ### 雷达无线链路数据
 
 | 话题名称 | 命令码 | 频率 | 描述 |
 |---------|--------|------|------|
-| `/referee/enemy_position` | 0x0A01 | 10Hz | 对方机器人位置 |
-| `/referee/enemy_hp` | 0x0A02 | 10Hz | 对方机器人血量 |
-| `/referee/enemy_ammo` | 0x0A03 | 10Hz | 对方机器人发弹量 |
-| `/referee/enemy_team_status` | 0x0A04 | 10Hz | 对方队伍状态 |
-| `/referee/enemy_buff` | 0x0A05 | 10Hz | 对方增益效果 |
-| `/referee/enemy_jamming_key` | 0x0A06 | 10Hz | 对方干扰波密钥 |
+| `/referee/common/enemy_position` | 0x0A01 | 10Hz | 对方机器人位置 |
+| `/referee/common/enemy_hp` | 0x0A02 | 10Hz | 对方机器人血量 |
+| `/referee/common/enemy_ammo` | 0x0A03 | 10Hz | 对方机器人发弹量 |
+| `/referee/common/enemy_team_status` | 0x0A04 | 10Hz | 对方队伍状态 |
+| `/referee/common/enemy_buff` | 0x0A05 | 10Hz | 对方增益效果 |
+| `/referee/common/enemy_jamming_key` | 0x0A06 | 10Hz | 对方干扰波密钥 |
+
+### 解析后数据话题 (`/referee/parsed/common/*`)
+
+| 话题名称 | 消息类型 | 频率 | 描述 |
+|---------|----------|------|------|
+| `/referee/parsed/common/constraints` | Constraints | 1Hz | 约束状态（热量、功率、发弹控制） |
+| `/referee/parsed/common/self_color` | SelfColor | 1Hz | 自车颜色（红/蓝） |
+
+**Constraints 消息字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `shooter_heat` | float | 当前射击热量 |
+| `heat_limit` | float | 热量上限 |
+| `chassis_power` | float | 当前底盘功率 |
+| `chassis_power_limit` | float | 底盘功率上限 |
+| `fire_allowed` | bool | 是否允许发弹 |
+| `speed_scale` | float | 速度缩放因子 (0.35-1.0) |
+
+**SelfColor 消息字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `color` | uint8 | 颜色：0=未知, 1=红方, 2=蓝方 |
 
 ---
 
@@ -302,6 +284,9 @@ PoseStamped:
 | `shooter_barrel_cooling_value` | uint16 | 射击热量冷却值 |
 | `shooter_barrel_heat_limit` | uint16 | 射击热量上限 |
 | `chassis_power_limit` | uint16 | 底盘功率上限（瓦） |
+| `power_management_gimbal_output` | bool | 云台电源输出状态 |
+| `power_management_chassis_output` | bool | 底盘电源输出状态 |
+| `power_management_shooter_output` | bool | 射击电源输出状态 |
 
 ### RobotHeat（实时热量）- 0x0202
 
@@ -326,50 +311,74 @@ PoseStamped:
 
 ## ⚙️ 配置文件
 
-配置文件 `config/topic_config.yaml` 用于控制每个话题是否发布：
+配置文件 `config/topic_config.yaml` 支持两种配置方式：
+
+### 1. 具体话题配置
+
+直接指定话题启用/禁用：
 
 ```yaml
-# 话题发布配置
-# true: 发布该话题
-# false: 不发布该话题
-
 topics:
-  # 常规链路数据
   game_status: true           # 比赛状态
-  game_result: true           # 比赛结果
-  robot_hp: true              # 机器人血量
-  field_event: true           # 场地事件
-  referee_warning: true       # 裁判警告
-  dart_launch_data: true      # 飞镖发射数据
   robot_performance: true     # 机器人性能
-  robot_heat: true            # 实时热量
-  robot_position: true        # 机器人位置
-  robot_buff: true            # 机器人增益
-  damage_state: true          # 伤害状态
-  shoot_data: true            # 射击数据
-
-  # 图传链路数据
-  custom_controller_to_robot: true
-  robot_to_custom_controller: true
-
-  # 雷达数据（如不需要可禁用以节省资源）
-  enemy_position: false
-  enemy_hp: false
-  enemy_ammo: false
+  enemy_position: false       # 对方位置（禁用）
 ```
+
+### 2. Glob 模式匹配
+
+支持通配符批量配置：
+
+```yaml
+topics:
+  # 禁用所有 /referee/common/ 下的话题
+  '/referee/common/*': false
+
+  # 覆盖：启用特定话题（后定义的覆盖先定义的）
+  '/referee/common/game_status': true
+  '/referee/common/robot_performance': true
+  '/referee/common/robot_heat': true
+  '/referee/common/shoot_data': true
+
+  # 启用所有敌方数据
+  '/referee/common/enemy_*': true
+
+  # 启用所有解析后数据
+  '/referee/parsed/**': true
+```
+
+**Glob 模式说明：**
+- `*` - 匹配任意字符（不包括 `/`）
+- `**` - 匹配任意字符（包括 `/`，支持多级路径）
+- **优先级**：后定义的规则覆盖先定义的规则
 
 ---
 
 ## 🔧 参数说明
 
+### 基础参数
+
 | 参数名 | 类型 | 默认值 | 描述 |
 |--------|------|--------|------|
-| `serial_port_normal` | string | /dev/ttyUSB0 | 常规链路串口设备 |
-| `serial_port_video` | string | /dev/ttyUSB1 | 图传链路串口设备 |
-| `serial_baud_normal` | int | 115200 | 常规链路波特率 |
-| `serial_baud_video` | int | 921600 | 图传链路波特率 |
+| `serial_port` | string | /dev/ttyUSB0 | 串口设备路径 |
+| `serial_baud` | int | 115200 | 波特率 |
 | `config_file` | string | "" | 配置文件路径 |
 | `publish_all_topics` | bool | true | 是否发布所有话题 |
+
+### 串口高级参数
+
+| 参数名 | 类型 | 默认值 | 描述 |
+|--------|------|--------|------|
+| `serial_auto_baud_scan` | bool | true | 是否启用自动波特率扫描 |
+| `serial_no_data_reopen_sec` | float | 3.0 | 无数据重连超时（秒） |
+
+### 约束计算参数
+
+| 参数名 | 类型 | 默认值 | 描述 |
+|--------|------|--------|------|
+| `heat_lock_margin` | float | 15.0 | 热量锁定裕度（低于上限多少开始禁止发弹） |
+| `power_high_ratio` | float | 0.9 | 高功率警告阈值（功率/上限） |
+| `power_hard_ratio` | float | 1.0 | 硬限功率阈值（功率/上限） |
+| `min_speed_scale` | float | 0.35 | 最小速度缩放因子 |
 
 ---
 
@@ -421,7 +430,7 @@ topics:
 
 1. 将裁判系统的串口线连接到上位机的 USB 端口
 2. 确保使用 USB 转串口芯片（如 CH340、CP2102 等）
-3. 常规链路波特率：115200，图传链路波特率：921600
+3. 常规链路波特率：115200
 
 ### 检查串口设备
 
@@ -499,7 +508,7 @@ sudo chmod 666 /dev/ttyUSB0
 - 数据传输干扰
 
 **解决方案：**
-- 确认波特率设置正确（常规链路 115200，图传链路 921600）
+- 确认波特率设置正确（常规链路 115200）
 - 更换质量更好的 USB 转串口线
 - 使用带屏蔽的串口线
 
@@ -515,13 +524,21 @@ sudo chmod 666 /dev/ttyUSB0
 - 使用 `test_serial_direct.py` 测试串口
 - 检查裁判系统配置
 
-### 问题 5：ROS 2 节点启动失败
+### 问题 5：长时间无数据自动重连
 
-**错误信息：** `AttributeError: can't set attribute 'publishers'`
+**现象：** 日志显示 "串口无有效数据，切换波特率重连"
 
-**原因：** `publishers` 是 ROS 2 Node 的保留属性
+**原因：** 自动波特率扫描功能检测到长时间无有效数据帧
 
-**解决方案：** 确保使用最新版本代码，该问题已修复。
+**解决方案：**
+- 如果波特率已知且固定，可以禁用自动扫描：
+  ```bash
+  ros2 run dji_referee_protocol referee_serial_node --ros-args -p serial_auto_baud_scan:=false
+  ```
+- 调整超时时间：
+  ```bash
+  ros2 run dji_referee_protocol referee_serial_node --ros-args -p serial_no_data_reopen_sec:=10.0
+  ```
 
 ---
 
