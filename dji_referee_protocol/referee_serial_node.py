@@ -86,6 +86,15 @@ import serial
 # 本地模块导入
 from .protocol_constants import CommandID, SerialConfig
 from .protocol_parser import ProtocolParser
+from .protocol_constants import OperatorClientID
+from .ui_protocol import (
+    UIDrawingProtocol,
+    UIDataCommandID,
+    UIGraphic,
+    UIGraphicOperation,
+    UIGraphicType,
+    UIColor,
+)
 
 
 class RefereeSerialNode(Node):
@@ -110,6 +119,16 @@ class RefereeSerialNode(Node):
         self.declare_parameter('power_high_ratio', 0.9)
         self.declare_parameter('power_hard_ratio', 1.0)
         self.declare_parameter('min_speed_scale', 0.35)
+        self.declare_parameter('ui_enable_tx', False)
+        self.declare_parameter('ui_update_period_sec', 0.5)
+        self.declare_parameter('ui_target_client_id', 0)
+        self.declare_parameter('ui_layer', 8)
+        self.declare_parameter('ui_color', int(UIColor.SELF))
+        self.declare_parameter('ui_anchor_x', 80)
+        self.declare_parameter('ui_anchor_y', 860)
+        self.declare_parameter('ui_line_gap', 35)
+        self.declare_parameter('ui_font_size', 20)
+        self.declare_parameter('ui_line_width', 2)
 
         # 获取参数
         self.serial_port_path = self.get_parameter('serial_port').value
@@ -122,6 +141,16 @@ class RefereeSerialNode(Node):
         self.power_high_ratio = float(self.get_parameter('power_high_ratio').value or 0.9)
         self.power_hard_ratio = float(self.get_parameter('power_hard_ratio').value or 1.0)
         self.min_speed_scale = float(self.get_parameter('min_speed_scale').value or 0.35)
+        self.ui_enable_tx = bool(self.get_parameter('ui_enable_tx').value)
+        self.ui_update_period_sec = float(self.get_parameter('ui_update_period_sec').value or 0.5)
+        self.ui_target_client_id = int(self.get_parameter('ui_target_client_id').value or 0)
+        self.ui_layer = int(self.get_parameter('ui_layer').value or 8)
+        self.ui_color = int(self.get_parameter('ui_color').value or int(UIColor.SELF))
+        self.ui_anchor_x = int(self.get_parameter('ui_anchor_x').value or 80)
+        self.ui_anchor_y = int(self.get_parameter('ui_anchor_y').value or 860)
+        self.ui_line_gap = int(self.get_parameter('ui_line_gap').value or 35)
+        self.ui_font_size = int(self.get_parameter('ui_font_size').value or 20)
+        self.ui_line_width = int(self.get_parameter('ui_line_width').value or 2)
 
         # ==================== 初始化协议解析器 ====================
         self.parser = ProtocolParser()
@@ -133,6 +162,7 @@ class RefereeSerialNode(Node):
 
         # ==================== 初始化串口 ====================
         self.serial_port: Optional[serial.Serial] = None
+        self.serial_lock = threading.Lock()
         self._init_serial_port()
 
         # ==================== 创建话题发布器 ====================
@@ -170,10 +200,22 @@ class RefereeSerialNode(Node):
         self.latest_chassis_power_limit = 0.0
         self.latest_robot_id = 0
         self.latest_self_color = Constants.COLOR_UNKNOWN
+        self.latest_projectile_allowance_17mm = 0
+        self.latest_projectile_allowance_42mm = 0
+        self.latest_remaining_gold_coin = 0
+        self.latest_fortress_reserve_17mm = 0
+        self.latest_fire_allowed = True
+        self.latest_speed_scale = 1.0
+        self.ui_tx_seq = 0
+        self.ui_last_receiver_id = 0
+        self.ui_initialized = False
 
         # 状态周期发布定时器
         self.state_timer = self.create_timer(1.0, self._publish_state_heartbeat)
         self.serial_watchdog_timer = self.create_timer(1.0, self._serial_watchdog_tick)
+        self.ui_timer = None
+        if self.ui_enable_tx:
+            self.ui_timer = self.create_timer(max(0.1, self.ui_update_period_sec), self._ui_timer_tick)
 
         # ==================== 运行控制 ====================
         self.running = True
@@ -458,11 +500,14 @@ class RefereeSerialNode(Node):
                     time.sleep(0.05)
                     continue
 
-                if self.serial_port.in_waiting > 0:
-                    data = self.serial_port.read(self.serial_port.in_waiting)
-                    if data:
-                        self.last_byte_time = time.monotonic()
-                        self.rx_bytes += len(data)
+                data = b''
+                with self.serial_lock:
+                    if self.serial_port and self.serial_port.is_open and self.serial_port.in_waiting > 0:
+                        data = self.serial_port.read(self.serial_port.in_waiting)
+
+                if data:
+                    self.last_byte_time = time.monotonic()
+                    self.rx_bytes += len(data)
                     self.parser.feed_data(data)
 
                     while True:
@@ -485,20 +530,22 @@ class RefereeSerialNode(Node):
     def _reopen_serial(self, baud: int) -> None:
         """重开串口并切换波特率"""
         try:
-            if self.serial_port and self.serial_port.is_open:
-                self.serial_port.close()
+            with self.serial_lock:
+                if self.serial_port and self.serial_port.is_open:
+                    self.serial_port.close()
         except Exception:
             pass
 
         try:
-            self.serial_port = serial.Serial(
-                port=self.serial_port_path,
-                baudrate=baud,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=SerialConfig.TIMEOUT
-            )
+            with self.serial_lock:
+                self.serial_port = serial.Serial(
+                    port=self.serial_port_path,
+                    baudrate=baud,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=SerialConfig.TIMEOUT
+                )
             self.serial_baud = baud
             self.last_byte_time = time.monotonic()
             self.last_packet_time = time.monotonic()
@@ -546,14 +593,20 @@ class RefereeSerialNode(Node):
             self.latest_shooter_heat = float(getattr(data, 'shooter_17mm_barrel_heat', 0.0))
             self.latest_chassis_power = float(getattr(data, 'chassis_current_power', 0.0))
             updated = True
+        elif cmd_id == CommandID.ALLOWED_SHOOT:
+            self.latest_projectile_allowance_17mm = int(getattr(data, 'projectile_allowance_17mm', 0))
+            self.latest_projectile_allowance_42mm = int(getattr(data, 'projectile_allowance_42mm', 0))
+            self.latest_remaining_gold_coin = int(getattr(data, 'remaining_gold_coin', 0))
+            self.latest_fortress_reserve_17mm = int(getattr(data, 'fortress_reserve_17mm', 0))
+            updated = True
 
         if not updated:
             return
 
         self._publish_constraints()
 
-    def _publish_constraints(self) -> None:
-        """发布约束消息"""
+    def _calculate_constraint_values(self) -> Tuple[bool, float]:
+        """计算当前约束状态"""
         fire_allowed = True
         if self.latest_heat_limit > 0.0:
             fire_allowed = self.latest_shooter_heat < max(0.0, self.latest_heat_limit - self.heat_lock_margin)
@@ -570,14 +623,141 @@ class RefereeSerialNode(Node):
                 k = (ratio - self.power_high_ratio) / denom
                 speed_scale = 1.0 - k * (1.0 - self.min_speed_scale)
 
+        return fire_allowed, float(max(0.0, min(1.0, speed_scale)))
+
+    def _publish_constraints(self) -> None:
+        """发布约束消息"""
+        fire_allowed, speed_scale = self._calculate_constraint_values()
+        self.latest_fire_allowed = fire_allowed
+        self.latest_speed_scale = speed_scale
+
         msg = Constraints()
         msg.shooter_heat = float(self.latest_shooter_heat)
         msg.heat_limit = float(self.latest_heat_limit)
         msg.chassis_power = float(self.latest_chassis_power)
         msg.chassis_power_limit = float(self.latest_chassis_power_limit)
         msg.fire_allowed = fire_allowed
-        msg.speed_scale = float(max(0.0, min(1.0, speed_scale)))
+        msg.speed_scale = float(speed_scale)
         self.constraint_pub.publish(msg)
+
+    def _build_ui_line_texts(self) -> Tuple[str, str]:
+        """生成 UI 两行显示文本"""
+        line1 = (
+            f"A17:{self.latest_projectile_allowance_17mm} "
+            f"A42:{self.latest_projectile_allowance_42mm} "
+            f"G:{self.latest_remaining_gold_coin} "
+            f"R:{self.latest_fortress_reserve_17mm}"
+        )
+        line2 = (
+            f"H:{int(self.latest_shooter_heat)}/{int(self.latest_heat_limit)} "
+            f"P:{int(self.latest_chassis_power)}/{int(self.latest_chassis_power_limit)} "
+            f"F:{1 if self.latest_fire_allowed else 0} "
+            f"S:{self.latest_speed_scale:.2f}"
+        )
+        return line1[:30], line2[:30]
+
+    def _resolve_ui_receiver_id(self) -> int:
+        """解析 UI 接收者选手端 ID"""
+        if self.ui_target_client_id > 0:
+            return self.ui_target_client_id
+
+        robot_id = int(self.latest_robot_id)
+        mapping = {
+            1: int(OperatorClientID.RED_HERO),
+            2: int(OperatorClientID.RED_ENGINEER),
+            3: int(OperatorClientID.RED_INFANTRY_3),
+            4: int(OperatorClientID.RED_INFANTRY_4),
+            5: int(OperatorClientID.RED_INFANTRY_5),
+            6: int(OperatorClientID.RED_AERIAL),
+            101: int(OperatorClientID.BLUE_HERO),
+            102: int(OperatorClientID.BLUE_ENGINEER),
+            103: int(OperatorClientID.BLUE_INFANTRY_3),
+            104: int(OperatorClientID.BLUE_INFANTRY_4),
+            105: int(OperatorClientID.BLUE_INFANTRY_5),
+            106: int(OperatorClientID.BLUE_AERIAL),
+        }
+        return mapping.get(robot_id, 0)
+
+    def _send_ui_frame(self, data_cmd_id: int, content_payload: bytes, receiver_id: int) -> bool:
+        """发送单帧 UI 数据"""
+        if not self.serial_port or not self.serial_port.is_open:
+            return False
+        if self.latest_robot_id <= 0 or receiver_id <= 0:
+            return False
+
+        frame = UIDrawingProtocol.build_robot_interaction_frame(
+            seq=self.ui_tx_seq,
+            data_cmd_id=data_cmd_id,
+            sender_id=self.latest_robot_id,
+            receiver_id=receiver_id,
+            content_payload=content_payload,
+        )
+        self.ui_tx_seq = (self.ui_tx_seq + 1) & 0xFF
+
+        try:
+            with self.serial_lock:
+                if not self.serial_port or not self.serial_port.is_open:
+                    return False
+                written = self.serial_port.write(frame)
+            return written == len(frame)
+        except serial.SerialException as e:
+            self.get_logger().warn(f'UI帧发送失败: {e}')
+            return False
+
+    def _send_ui_delete_all(self, receiver_id: int) -> bool:
+        """发送 UI 全删除命令（表 1-25）"""
+        payload = UIDrawingProtocol.pack_delete_payload(delete_operation=2, layer=0)
+        return self._send_ui_frame(int(UIDataCommandID.DELETE), payload, receiver_id)
+
+    def _send_ui_char_line(self, receiver_id: int, name: str, text: str, x: int, y: int, add_mode: bool) -> bool:
+        """发送 UI 字符绘制命令（表 1-31）"""
+        graphic = UIGraphic(
+            name=name,
+            operation=int(UIGraphicOperation.ADD if add_mode else UIGraphicOperation.MODIFY),
+            graphic_type=int(UIGraphicType.CHAR),
+            layer=self.ui_layer,
+            color=self.ui_color,
+            details_a=self.ui_font_size,
+            details_b=len(text.encode('utf-8', errors='ignore')[:30]),
+            width=self.ui_line_width,
+            start_x=x,
+            start_y=y,
+            details_c=0,
+            details_d=0,
+            details_e=0,
+        )
+        payload = UIDrawingProtocol.pack_char_payload(graphic, text)
+        return self._send_ui_frame(
+            data_cmd_id=int(UIDataCommandID.DRAW_CHAR),
+            content_payload=payload,
+            receiver_id=receiver_id,
+        )
+
+    def _ui_timer_tick(self) -> None:
+        """周期发送 UI 绘制数据"""
+        if not self.ui_enable_tx:
+            return
+
+        receiver_id = self._resolve_ui_receiver_id()
+        if receiver_id <= 0 or self.latest_robot_id <= 0:
+            return
+
+        need_add = (not self.ui_initialized) or (receiver_id != self.ui_last_receiver_id)
+        if need_add:
+            self._send_ui_delete_all(receiver_id)
+            self.ui_initialized = True
+            self.ui_last_receiver_id = receiver_id
+
+        line1, line2 = self._build_ui_line_texts()
+        self._send_ui_char_line(receiver_id, 'AS1', line1, self.ui_anchor_x, self.ui_anchor_y, add_mode=need_add)
+        self._send_ui_char_line(
+            receiver_id,
+            'CS1',
+            line2,
+            self.ui_anchor_x,
+            self.ui_anchor_y - self.ui_line_gap,
+            add_mode=need_add,
+        )
 
     def _publish_self_color_from_robot_id(self, robot_id: int) -> None:
         """根据机器人ID发布自车颜色"""
@@ -745,7 +925,9 @@ class RefereeSerialNode(Node):
             self.read_thread.join(timeout=1.0)
 
         if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
+            with self.serial_lock:
+                if self.serial_port and self.serial_port.is_open:
+                    self.serial_port.close()
 
         super().destroy_node()
 

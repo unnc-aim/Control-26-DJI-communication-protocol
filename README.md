@@ -13,6 +13,7 @@
 - ✅ 支持串口读取（常规链路）
 - ✅ 严格按照官方协议文档解析数据
 - ✅ 将每类数据发布为独立的 ROS 2 话题
+- ✅ 支持通过串口发送 0x0301 UI 绘制数据（表 1-25~1-31）
 - ✅ 支持 YAML 配置文件控制话题发布（支持 Glob 模式匹配）
 - ✅ 使用自定义 ROS 2 消息类型
 - ✅ 提供解析后的约束状态和颜色信息
@@ -23,7 +24,7 @@
 
 ### 协议版本
 
-- 版本：V1.2.0
+- 版本：V1.2.0（兼容新增 0x0301 UI 绘制表 1-25~1-31）
 - 更新日期：2026.02.09
 
 ---
@@ -379,6 +380,21 @@ topics:
 | `power_high_ratio` | float | 0.9 | 高功率警告阈值（功率/上限） |
 | `power_hard_ratio` | float | 1.0 | 硬限功率阈值（功率/上限） |
 | `min_speed_scale` | float | 0.35 | 最小速度缩放因子 |
+
+### UI 下发参数（0x0301）
+
+| 参数名 | 类型 | 默认值 | 描述 |
+|--------|------|--------|------|
+| `ui_enable_tx` | bool | false | 是否启用 UI 串口发送 |
+| `ui_update_period_sec` | float | 0.5 | UI 更新周期（秒） |
+| `ui_target_client_id` | int | 0 | 指定接收选手端 ID（0=按 robot_id 自动映射） |
+| `ui_layer` | int | 8 | 绘制图层 |
+| `ui_color` | int | 0 | 绘制颜色（0=己方色） |
+| `ui_anchor_x` | int | 80 | 文本锚点 x |
+| `ui_anchor_y` | int | 860 | 文本第一行 y |
+| `ui_line_gap` | int | 35 | 两行文本间距 |
+| `ui_font_size` | int | 20 | 字体大小 |
+| `ui_line_width` | int | 2 | 线宽 |
 
 ---
 
