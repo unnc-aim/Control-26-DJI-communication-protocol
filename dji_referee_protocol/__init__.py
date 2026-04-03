@@ -15,3 +15,8 @@ DJI机甲大师裁判系统通信协议ROS 2功能包
 __version__ = '1.0.0'
 __author__ = 'Your Name'
 __license__ = 'MIT'
+
+# 导出主要入口点
+from .referee_serial_node import main
+
+__all__ = ['main']

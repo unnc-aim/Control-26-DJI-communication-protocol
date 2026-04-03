@@ -121,9 +121,9 @@ class RefereeSerialNode(Node):
         self.declare_parameter('power_high_ratio', 0.9)
         self.declare_parameter('power_hard_ratio', 1.0)
         self.declare_parameter('min_speed_scale', 0.35)
-        self.declare_parameter('ui_enable_tx', False)
+        self.declare_parameter('ui_enable_tx', True)
         self.declare_parameter('ui_update_period_sec', 0.5)
-        self.declare_parameter('ui_target_client_id', 0)
+        self.declare_parameter('ui_target_client_id', 0x103)
         self.declare_parameter('ui_layer', 8)
         self.declare_parameter('ui_color', int(UIColor.SELF))
         self.declare_parameter('ui_anchor_x', 80)
@@ -156,7 +156,6 @@ class RefereeSerialNode(Node):
 
         # ==================== 初始化协议解析器 ====================
         self.parser = ProtocolParser()
-
 
         # ==================== 初始化话题订阅 ==================
 
@@ -202,10 +201,11 @@ class RefereeSerialNode(Node):
 
         # 裁判约束状态
         self.state_qos = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            depth=5,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=
+            DurabilityPolicy.VOLATILE
         )
         self.constraint_pub = self.create_publisher(
             Constraints, '/referee/parsed/common/constraints', self.state_qos)
@@ -257,6 +257,7 @@ class RefereeSerialNode(Node):
     def _match_glob_pattern(self, topic_name: str, pattern: str) -> bool:
         """
         检查话题名是否匹配glob模式
+        
 
         支持的通配符：
         - * : 匹配任意字符（不包括 /）
@@ -409,9 +410,11 @@ class RefereeSerialNode(Node):
                             enabled_patterns = [p for p, e in self.glob_patterns if e]
                             disabled_patterns = [p for p, e in self.glob_patterns if not e]
                             if enabled_patterns:
-                                self.get_logger().info(f'启用模式 ({len(enabled_patterns)}): {", ".join(enabled_patterns)}')
+                                self.get_logger().info(
+                                    f'启用模式 ({len(enabled_patterns)}): {", ".join(enabled_patterns)}')
                             if disabled_patterns:
-                                self.get_logger().info(f'禁用模式 ({len(disabled_patterns)}): {", ".join(disabled_patterns)}')
+                                self.get_logger().info(
+                                    f'禁用模式 ({len(disabled_patterns)}): {", ".join(disabled_patterns)}')
 
             except Exception as e:
                 self.get_logger().warn(f'加载配置文件失败: {e}，使用默认配置')
@@ -595,28 +598,26 @@ class RefereeSerialNode(Node):
         self._reopen_serial(next_baud)
 
     def _supercap_ui_callback(self, msg):
-        self.sp_valid : bool = msg.cap_valid
-        self.sp_stat : int = msg.cap_status
-        self.sp_stat_str : str 
+        self.sp_valid: bool = msg.cap_valid
+        self.sp_stat: int = msg.cap_status
+        self.sp_stat_str: str
         match self.sp_stat:
             case 0:
                 self.sp_stat_str = 'DISCHARGE'
-            case 1: 
+            case 1:
                 self.sp_stat_str = 'CHARGE'
             case 2:
                 self.sp_stat_str = 'WAIT'
             case _:
                 self.sp_stat_str = 'INTERRUPT'
 
-        self.sp_remain_precentage : int = max(0, min(100, int(msg.cap_remain_percentage)))
-
-
+        self.sp_remain_precentage: int = max(0, min(100, int(msg.cap_remain_percentage)))
 
     def _input_ui_callback(self, msg):
-        self.autoaim_enabled : bool = msg.autoaim_enabled
-        self.fric_enabled : bool = msg.friction_on
-        self.spin_enabled : bool = msg.spin_mode
-        self.spin_enalbed : bool = self.spin_enabled
+        self.autoaim_enabled: bool = msg.autoaim_enabled
+        self.fric_enabled: bool = msg.friction_on
+        self.spin_enabled: bool = msg.spin_mode
+        self.spin_enalbed: bool = self.spin_enabled
         pass
 
     def _publish_data(self, cmd_id: int, data: Any) -> None:
